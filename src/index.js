@@ -128,6 +128,7 @@ export class Room {
       kind: msg.kind || "motion",
       level: Math.round((msg.level || 0) * 100) / 100,
       jpeg: msg.jpeg || null,
+      onDevice: Array.isArray(msg.labels) ? msg.labels.slice(0, 6) : null, // 폰에서 1차 판별한 결과
       alert: false,
       rule: null,
       text: msg.kind === "sound" ? `소리 감지 (크기 ${Math.round((msg.level || 0) * 100)}%)` : "움직임 감지",
@@ -139,8 +140,8 @@ export class Room {
       this.lastAiAt = now;
       try {
         const r = active.length
-          ? await this.judge(msg.jpeg, active)
-          : await this.describe(msg.jpeg);
+          ? await this.judge(msg.jpeg, active, ev.onDevice)
+          : await this.describe(msg.jpeg, ev.onDevice);
         Object.assign(ev, r);
       } catch (e) {
         ev.aiError = String(e).slice(0, 140);
@@ -155,14 +156,16 @@ export class Room {
   }
 
   /** 사용자가 한국어로 쓴 규칙에 화면이 부합하는지 VLM이 판정 */
-  async judge(dataUrl, rules) {
+  async judge(dataUrl, rules, onDevice) {
     const list = rules.map((r, i) => `${i + 1}. ${r.text}`).join("\n");
+    const hint = hintLine(onDevice);
     const sys =
       "너는 가정용 감시 카메라의 판독기다. 사진을 보고, 사용자가 정한 알림 조건 중 " +
       "실제로 충족된 것이 있는지 판단한다. 보이지 않는 것을 추측하지 마라. " +
       '반드시 JSON만 출력한다: {"match": true|false, "rule": 번호 또는 null, "text": "한국어 한 문장"}. ' +
       "match가 false면 text에는 화면에 보이는 것을 짧게 한국어로 적는다.";
-    const user = `알림 조건:\n${list}\n\n이 사진이 위 조건 중 하나라도 충족하는가?`;
+    const user =
+      `알림 조건:\n${list}\n${hint}\n\n이 사진이 위 조건 중 하나라도 충족하는가?`;
 
     const out = await this.callVlm(dataUrl, sys, user);
     const parsed = parseJson(out.text);
@@ -177,11 +180,15 @@ export class Room {
   }
 
   /** 규칙이 없으면 장면을 한국어 한 문장으로 서술 */
-  async describe(dataUrl) {
+  async describe(dataUrl, onDevice) {
     const sys =
       "너는 가정용 감시 카메라의 판독기다. 사진에 보이는 것을 한국어 한 문장으로 " +
       "짧고 사실만 담아 설명한다. 추측하지 말고 보이는 것만 말해라. 설명 외 다른 말은 하지 마라.";
-    const out = await this.callVlm(dataUrl, sys, "이 사진에 무엇이 보이는가?");
+    const out = await this.callVlm(
+      dataUrl,
+      sys,
+      `이 사진에 무엇이 보이는가?${hintLine(onDevice)}`
+    );
     return { text: (out.text || "장면 판독 실패").slice(0, 200), model: out.model };
   }
 
@@ -309,6 +316,13 @@ function parseJson(s) {
   const a = cleaned.indexOf("{"), b = cleaned.lastIndexOf("}");
   if (a < 0 || b <= a) return null;
   try { return JSON.parse(cleaned.slice(a, b + 1)); } catch { return null; }
+}
+
+/** 폰에서 1차로 잡아낸 라벨을 모델에게 참고로만 넘긴다 (단정하지 않도록 표현) */
+function hintLine(onDevice) {
+  if (!onDevice || !onDevice.length) return "";
+  const items = onDevice.map((o) => `${o.label}(${o.score}%)`).join(", ");
+  return `\n참고: 기기에서 1차 탐지된 후보는 [${items}] 이다. 틀릴 수 있으니 사진을 직접 보고 판단하라.`;
 }
 
 function hhmm(ts) {

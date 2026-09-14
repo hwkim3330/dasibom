@@ -42,11 +42,13 @@
       <input id="ruleIn" class="grow" maxlength="120" placeholder="예: 고양이가 식탁에 올라가면 알려줘">
       <button id="btnAdd" class="primary">추가</button>
     </div>
-    <div class="row" style="margin-top:8px;gap:6px">
-      <button class="small ex">사람이 보이면 알려줘</button>
-      <button class="small ex">택배 상자가 놓이면 알려줘</button>
-      <button class="small ex">고양이가 식탁에 올라가면 알려줘</button>
-      <button class="small ex">불이 켜져 있으면 알려줘</button>
+    <div class="small dim" style="margin-top:12px">현장 프리셋 — 누르면 그 현장에 맞는 규칙이 채워집니다</div>
+    <div class="row" style="margin-top:6px;gap:6px">
+      <button class="small preset" data-k="home">🏠 집</button>
+      <button class="small preset" data-k="shop">🏪 무인매장</button>
+      <button class="small preset" data-k="farm">🌱 농가·창고</button>
+      <button class="small preset" data-k="site">🚧 공사현장</button>
+      <button class="small preset" data-k="care">🧓 어르신 돌봄</button>
     </div>
     <div id="rules" style="margin-top:12px"></div>
     <div class="hint" id="ruleHint">규칙이 없으면 AI가 감지된 장면을 한국어로 설명만 합니다.</div>
@@ -79,7 +81,14 @@
     </div>
   </div>
 
-  <footer>다시봄 · 보기 모드 · 판독 모델 <span class="mono" id="fModel">Qwen 3.8 27B</span></footer>
+  <div class="card" style="margin-top:14px">
+    <div class="row" style="justify-content:space-between">
+      <div><b>카메라가 여러 대인가요?</b><div class="small dim">매장·창고·농가처럼 여러 지점을 한 화면에서</div></div>
+      <a class="btn primary" id="toWall">🖥 관제 화면</a>
+    </div>
+  </div>
+
+  <footer>다시봄 · 보기 모드 · 판독 모델 <span class="mono">Qwen 3.8 27B</span></footer>
 </div>
 
 <script>
@@ -158,7 +167,19 @@ function addRule(text){
 }
 $("#btnAdd").onclick=()=>addRule($("#ruleIn").value);
 $("#ruleIn").onkeydown=(e)=>{ if(e.key==="Enter") addRule(e.target.value); };
-$$(".ex").forEach(b=>b.onclick=()=>addRule(b.textContent));
+
+const PRESETS={
+  home:["사람이 보이면 알려줘","택배 상자가 놓이면 알려줘","고양이나 개가 식탁 위에 올라가면 알려줘"],
+  shop:["사람이 계산대 안쪽으로 들어가면 알려줘","진열대가 비어 있으면 알려줘","바닥에 물건이 떨어져 있으면 알려줘"],
+  farm:["창고 문이 열려 있으면 알려줘","사람이나 동물이 들어오면 알려줘","바닥에 물이 고여 있으면 알려줘"],
+  site:["안전모를 쓰지 않은 사람이 보이면 알려줘","출입 통제 구역에 사람이 있으면 알려줘","장비가 쓰러져 있으면 알려줘"],
+  care:["사람이 바닥에 누워 있으면 알려줘","한참 동안 아무도 보이지 않으면 알려줘","현관문이 열려 있으면 알려줘"],
+};
+$$(".preset").forEach(b=>b.onclick=()=>{
+  const set=PRESETS[b.dataset.k]||[];
+  rules=set.map((t,i)=>({id:String(Date.now()+i),text:t,enabled:true}));
+  saveRules();
+});
 
 /* ── 이벤트 ───────────────────────────── */
 function renderEvents(){
@@ -213,6 +234,7 @@ $("#btnJoin").onclick=()=>{
   $("#bCode").textContent=code; localStorage.setItem("dasibom:code",code); connect();
 };
 
+$("#toWall").href = `/wall?add=${code}`;
 renderEvents(); renderRules(); connect();
 if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
 </script>

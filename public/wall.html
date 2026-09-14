@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>다시봄 — 관제</title>
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+<style>
+.wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.cam{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.cam.alert{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.cam .sh{position:relative;aspect-ratio:4/3;background:#000}
+.cam .sh img{width:100%;height:100%;object-fit:contain;display:block}
+.cam .no{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim);font-size:13px}
+.cam .hd{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;gap:8px}
+.cam .nm{font-weight:700;font-size:14.5px;background:none;border:none;color:var(--fg);padding:0;width:100%;font-family:inherit}
+.cam .ft{padding:0 10px 10px;font-size:12.5px;color:var(--dim);min-height:34px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row" style="justify-content:space-between;margin-bottom:6px">
+    <h1 style="font-size:20px;margin:0">🖥 관제</h1>
+    <a href="/" class="small dim">← 처음으로</a>
+  </div>
+  <p class="sub" style="margin:0 0 14px">
+    카메라 여러 대를 한 화면에서. 매장·창고·농가처럼 <b>여러 지점</b>을 볼 때 씁니다.
+  </p>
+
+  <div class="card">
+    <div class="row">
+      <input id="addCode" class="mono grow" maxlength="8" placeholder="방 코드" style="text-transform:uppercase">
+      <input id="addName" class="grow" maxlength="16" placeholder="이름 (예: 현관)">
+      <button id="btnAdd" class="primary">추가</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="pill" id="pTot">카메라 0대</span>
+      <span class="pill" id="pOn">연결 0</span>
+      <span class="pill" id="pAlert">🔔 알림 0</span>
+      <button id="btnNoti" class="small" style="margin-left:auto">🔔 알림 켜기</button>
+    </div>
+  </div>
+
+  <div class="wall" id="wall"></div>
+  <div id="empty" class="card small dim">위에 방 코드를 넣어 카메라를 추가하세요. 코드는 각 카메라 기기의 화면에 보입니다.</div>
+
+  <footer>다시봄 · 관제 모드</footer>
+</div>
+
+<script>
+const $=(s)=>document.querySelector(s);
+const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=(ts)=>new Date(ts).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+
+let cams=load(), notiOn=false, alerts=0;
+function load(){ try{ return JSON.parse(localStorage.getItem("dasibom:wall")||"[]"); }catch{ return []; } }
+function save(){ try{ localStorage.setItem("dasibom:wall",JSON.stringify(cams.map(c=>({code:c.code,name:c.name})))); }catch{} }
+
+function render(){
+  const w=$("#wall"); w.innerHTML="";
+  $("#empty").style.display=cams.length?"none":"block";
+  $("#pTot").textContent=`카메라 ${cams.length}대`;
+  cams.forEach((c,i)=>{
+    const d=document.createElement("div");
+    d.className="cam"; d.id="cam-"+c.code;
+    d.innerHTML=`
+      <div class="sh"><img alt=""><div class="no">대기 중</div></div>
+      <div class="hd">
+        <input class="nm" value="${esc(c.name)}" aria-label="카메라 이름">
+        <span class="pill" style="padding:3px 9px;font-size:11px"><i class="dot"></i><span class="st">—</span></span>
+        <button class="small danger" style="padding:5px 9px">✕</button>
+      </div>
+      <div class="ft">—</div>`;
+    d.querySelector(".nm").onchange=(e)=>{ c.name=e.target.value.slice(0,16); save(); };
+    d.querySelector("button").onclick=()=>{ try{c.ws&&c.ws.close();}catch{} cams.splice(i,1); save(); render(); connectAll(); };
+    d.onclick=(e)=>{ if(e.target.tagName!=="INPUT"&&e.target.tagName!=="BUTTON") location.href=`/view?room=${c.code}`; };
+    w.appendChild(d);
+  });
+  updateCounts();
+}
+
+function connectAll(){
+  cams.forEach(c=>{ if(!c.ws||c.ws.readyState>1) connect(c); });
+}
+function connect(c){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  const ws=new WebSocket(`${proto}://${location.host}/api/room/${c.code}/ws?role=viewer`);
+  c.ws=ws;
+  ws.onopen=()=>{ c.live=true; paintState(c); };
+  ws.onclose=()=>{ c.live=false; paintState(c); setTimeout(()=>{ if(cams.includes(c)) connect(c); },3000); };
+  ws.onmessage=(e)=>{
+    const m=JSON.parse(e.data), el=document.getElementById("cam-"+c.code);
+    if(!el) return;
+    if(m.t==="welcome"||m.t==="counts"){ c.cam=m.counts.cam; paintState(c);
+      if(m.t==="welcome"&&m.events?.length) paintEvent(c, m.events[m.events.length-1], false); }
+    if(m.t==="frame"){
+      const img=el.querySelector("img"); img.src=m.jpeg;
+      el.querySelector(".no").style.display="none";
+    }
+    if(m.t==="event"){ paintEvent(c, m.event, true); }
+  };
+}
+function paintState(c){
+  const el=document.getElementById("cam-"+c.code); if(!el) return;
+  const on=c.live && c.cam>0;
+  el.querySelector(".dot").className="dot"+(on?" on":"");
+  el.querySelector(".st").textContent = !c.live ? "끊김" : (c.cam>0 ? "연결" : "카메라 없음");
+  updateCounts();
+}
+function paintEvent(c, ev, isNew){
+  const el=document.getElementById("cam-"+c.code); if(!el) return;
+  el.querySelector(".ft").innerHTML =
+    `${ev.alert?'<b style="color:var(--accent)">🔔 </b>':""}${esc(ev.text||"감지")}<br><span class="small">${fmt(ev.ts)}</span>`;
+  if(ev.jpeg){ el.querySelector("img").src=ev.jpeg; el.querySelector(".no").style.display="none"; }
+  if(isNew && ev.alert){
+    alerts++; $("#pAlert").textContent=`🔔 알림 ${alerts}`;
+    el.classList.add("alert"); setTimeout(()=>el.classList.remove("alert"),8000);
+    try{ navigator.vibrate?.([90,50,90]); }catch{}
+    if(notiOn && Notification.permission==="granted"){
+      try{ new Notification(`다시봄 · ${c.name}`,{body:ev.text,icon:"/icon.svg",tag:"wall-"+c.code}); }catch{}
+    }
+  }
+}
+function updateCounts(){
+  $("#pOn").textContent=`연결 ${cams.filter(c=>c.live&&c.cam>0).length}`;
+}
+
+$("#btnAdd").onclick=()=>{
+  const code=$("#addCode").value.toUpperCase().replace(/[^A-Z0-9]/g,"");
+  if(code.length<4){ alert("방 코드를 입력하세요."); return; }
+  if(cams.some(c=>c.code===code)){ alert("이미 추가된 카메라입니다."); return; }
+  cams.push({code, name:$("#addName").value.trim()||`카메라 ${cams.length+1}`});
+  $("#addCode").value=""; $("#addName").value="";
+  save(); render(); connectAll();
+};
+$("#addCode").onkeydown=(e)=>{ if(e.key==="Enter") $("#btnAdd").click(); };
+$("#btnNoti").onclick=async()=>{
+  try{ notiOn=(await Notification.requestPermission())==="granted";
+    $("#btnNoti").textContent=notiOn?"🔔 알림 켜짐":"🔕 거부됨"; }catch{}
+};
+
+const q=new URLSearchParams(location.search).get("add");
+if(q && !cams.some(c=>c.code===q.toUpperCase())) cams.push({code:q.toUpperCase(),name:`카메라 ${cams.length+1}`});
+render(); connectAll();
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+</script>
+</body>
+</html>

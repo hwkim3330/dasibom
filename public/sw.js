@@ -1,6 +1,6 @@
 // 다시봄 — 최소 서비스워커 (오프라인 셸 + 홈 화면 설치용)
 const CACHE = "dasibom-v1";
-const SHELL = ["/", "/app.css", "/cam", "/view", "/icon.svg"];
+const SHELL = ["/", "/app.css", "/cam", "/view", "/wall", "/icon.svg"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });

@@ -57,6 +57,28 @@
     </div>
   </div>
 
+  <div class="card" style="border-color:#2f5e42">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0;font-size:15px">🧠 온디바이스 AI 필터</h2>
+      <label class="row small" style="gap:6px;cursor:pointer;margin:0">
+        <input type="checkbox" id="odOn" checked style="width:auto"> 사용
+      </label>
+    </div>
+    <p class="small dim" style="margin:8px 0 0">
+      움직임이 잡히면 <b>폰 안에서 먼저</b> 무엇이 있는지 봅니다.
+      아무것도 없으면 <b>서버로 보내지 않습니다.</b>
+    </p>
+    <div class="row" style="margin-top:10px">
+      <span class="pill"><i class="dot" id="dOd"></i><span id="sOd">준비 안 됨</span></span>
+      <span class="pill mono" id="pBackend">—</span>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <div class="stat">폰에서 걸러냄 <b id="vFilt">0</b></div>
+      <div class="stat">서버로 전송 <b id="vSent">0</b></div>
+    </div>
+    <div class="hint" id="odHint">모델을 내려받는 중입니다… (약 26MB, 처음 한 번만)</div>
+  </div>
+
   <div class="card">
     <h2 style="margin-top:0;font-size:15px">방 코드</h2>
     <div class="row">
@@ -79,6 +101,7 @@ let facing="environment", devices=[], devIdx=0;
 let viewers=0, torchOn=false, wakeLock=null;
 let audioCtx=null, analyser=null, sndData=null;
 let prev=null, lastDetect=0, lastFrame=0, motion=0, sound=0;
+let filtN=0, sentN=0;
 
 const v=$("#v");
 const work=document.createElement("canvas");            // 감지용 저해상도
@@ -223,9 +246,27 @@ async function loop(){
     const hit = motion>th || sound>0.55;
     if(hit && now-lastDetect>6000){
       lastDetect=now;
+      const soundOnly = sound>0.55 && motion<=th;
       const j=await capture(480,0.55);
-      send({t:"detect",kind: sound>0.55&&motion<=th ? "sound":"motion", level: Math.max(motion*4,sound), jpeg:j});
-      flash();
+
+      // ── 2차: 온디바이스 AI 필터 ──────────────────
+      let labels=null, pass=true;
+      if(j && !soundOnly && $("#odOn").checked && window.odDetect){
+        try{
+          labels = await window.odDetect(shot);
+          pass = labels.length>0;
+        }catch{ pass=true; }   // 모델 실패 시 그냥 통과시킨다
+      }
+
+      if(pass){
+        sentN++; $("#vSent").textContent=sentN;
+        send({t:"detect", kind: soundOnly?"sound":"motion",
+              level: Math.max(motion*4,sound), jpeg:j, labels});
+        flash();
+      }else{
+        filtN++; $("#vFilt").textContent=filtN;
+        flashDim();
+      }
     }
   }
   setTimeout(loop,220);
@@ -233,6 +274,10 @@ async function loop(){
 function flash(){
   const s=$("#stage"); s.style.outline="3px solid var(--accent)";
   setTimeout(()=>s.style.outline="",450);
+}
+function flashDim(){
+  const s=$("#stage"); s.style.outline="3px solid #4b5b6b";
+  setTimeout(()=>s.style.outline="",300);
 }
 
 /* ── 부가 웹 기능 ─────────────────────────── */
@@ -293,6 +338,80 @@ $("#btnJoin").onclick=()=>{
   if(running) connect();
 };
 if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+</script>
+
+<!-- ── 온디바이스 객체 탐지 (transformers.js + WebGPU) ───────────── -->
+<script type="module">
+const $=(s)=>document.querySelector(s);
+const CDN = [
+  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4",
+  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6",
+];
+// 알릴 가치가 있는 대상 (COCO 기준). 이 목록에 없으면 폰에서 버린다.
+const KEEP = new Set(["person","cat","dog","bird","horse","sheep","cow","bear",
+  "backpack","handbag","suitcase","bottle","cup","laptop","cell phone","book",
+  "car","bicycle","motorcycle","truck","chair","couch","bed","dining table"]);
+const THRESH = 0.35;
+
+function setOd(state, text, backend){
+  $("#dOd").className = "dot" + (state==="on" ? " on" : "");
+  $("#sOd").textContent = text;
+  if(backend) $("#pBackend").textContent = backend;
+}
+
+async function boot(){
+  let mod=null, lastErr=null;
+  for(const url of CDN){
+    try{ mod = await import(/* @vite-ignore */ url); break; }
+    catch(e){ lastErr=e; }
+  }
+  if(!mod){
+    setOd("off","라이브러리 로드 실패","—");
+    $("#odHint").textContent="온디바이스 필터를 쓸 수 없어 모든 감지를 서버로 보냅니다.";
+    return;
+  }
+
+  // WebGPU 우선, 안 되면 WASM
+  const hasGpu = !!navigator.gpu;
+  let detector=null, backend=null;
+  for(const dev of (hasGpu ? ["webgpu","wasm"] : ["wasm"])){
+    try{
+      setOd("load", `모델 준비 중 (${dev})`, dev.toUpperCase());
+      detector = await mod.pipeline("object-detection","Xenova/yolos-tiny",{
+        device: dev,
+        progress_callback: (p)=>{
+          if(p?.status==="progress" && p.progress!=null)
+            $("#odHint").textContent = `모델 내려받는 중 ${Math.round(p.progress)}%`;
+        },
+      });
+      backend = dev; break;
+    }catch(e){ /* 다음 백엔드로 */ }
+  }
+
+  if(!detector){
+    setOd("off","모델 로드 실패","—");
+    $("#odHint").textContent="온디바이스 필터를 쓸 수 없어 모든 감지를 서버로 보냅니다.";
+    return;
+  }
+
+  setOd("on","작동 중", backend.toUpperCase());
+  $("#odHint").innerHTML = `<b>${backend==="webgpu"?"WebGPU":"WASM"}</b>로 폰 안에서 돌고 있습니다. `
+    + `관심 대상이 없는 장면은 서버로 전송되지 않습니다.`;
+
+  let busy=false;
+  window.odDetect = async (canvas)=>{
+    if(busy) return [{label:"(대기)",score:1}];  // 겹치면 통과시킨다
+    busy=true;
+    try{
+      const out = await detector(canvas, { threshold: THRESH, percentage: true });
+      return (out||[])
+        .filter(o=>KEEP.has(o.label))
+        .slice(0,6)
+        .map(o=>({label:o.label, score:Math.round(o.score*100)}));
+    } finally { busy=false; }
+  };
+}
+boot();
 </script>
 </body>
 </html>
