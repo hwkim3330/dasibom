@@ -192,9 +192,10 @@ function renderEvents(){
     if(e.alert) d.style.borderColor="var(--accent)";
     const img=e.jpeg?`<img src="${e.jpeg}" alt="">`:"";
     const badge=e.alert?'<span class="pill" style="padding:2px 8px;font-size:11px;border-color:var(--accent);color:var(--accent)">🔔 알림</span> ':"";
+    const loc=e.local?'<span class="pill" style="padding:2px 8px;font-size:11px">🔒 기기 안에서 판정</span> ':"";
     const rule=e.rule?`<span class="t">조건: ${esc(e.rule)}</span>`:"";
     d.innerHTML=`${img}<div class="grow">
-        <div class="d">${badge}${esc(e.text||"감지")}</div>
+        <div class="d">${badge}${loc}${esc(e.text||"감지")}</div>
         <div class="t">${fmt(e.ts)} ${e.model?`· ${esc(shortModel(e.model))}`:""}</div>${rule}
       </div>`;
     box.appendChild(d);

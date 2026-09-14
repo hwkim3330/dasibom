@@ -68,14 +68,25 @@
       움직임이 잡히면 <b>폰 안에서 먼저</b> 무엇이 있는지 봅니다.
       아무것도 없으면 <b>서버로 보내지 않습니다.</b>
     </p>
+    <div class="row" style="margin-top:10px;gap:6px">
+      <button class="small tier" data-t="auto">자동</button>
+      <button class="small tier" data-t="gemma">Gemma 4 E2B · 완전 로컬</button>
+      <button class="small tier" data-t="yolo">yolos-tiny · 탐지만</button>
+      <button class="small tier" data-t="off">끄기</button>
+    </div>
     <div class="row" style="margin-top:10px">
       <span class="pill"><i class="dot" id="dOd"></i><span id="sOd">준비 안 됨</span></span>
       <span class="pill mono" id="pBackend">—</span>
+      <span class="pill" id="pTier">—</span>
     </div>
     <div class="grid2" style="margin-top:10px">
       <div class="stat">폰에서 걸러냄 <b id="vFilt">0</b></div>
       <div class="stat">서버로 전송 <b id="vSent">0</b></div>
     </div>
+    <label class="row small" style="gap:7px;margin-top:10px;cursor:pointer">
+      <input type="checkbox" id="noUpload" style="width:auto">
+      <span>완전 로컬 판정일 때 <b>사진도 서버에 올리지 않기</b></span>
+    </label>
     <div class="hint" id="odHint">모델을 내려받는 중입니다… (약 26MB, 처음 한 번만)</div>
   </div>
 
@@ -126,6 +137,7 @@ function connect(){
   ws.onmessage=(e)=>{
     const m=JSON.parse(e.data);
     if(m.t==="welcome"||m.t==="counts"){ viewers=m.counts.viewer; $("#pView").textContent=`👁 ${viewers}명`; }
+    if(m.t==="welcome"||m.t==="rules"){ window.camRules=(m.rules||[]).filter(r=>r.enabled); }
     if(m.t==="cmd") onCmd(m.cmd,m.value);
   };
 }
@@ -249,19 +261,29 @@ async function loop(){
       const soundOnly = sound>0.55 && motion<=th;
       const j=await capture(480,0.55);
 
-      // ── 2차: 온디바이스 AI 필터 ──────────────────
-      let labels=null, pass=true;
-      if(j && !soundOnly && $("#odOn").checked && window.odDetect){
+      // ── 2차: 온디바이스 AI ────────────────────────
+      let labels=null, verdict=null, pass=true;
+      const rules=(window.camRules||[]);
+
+      if(j && !soundOnly && $("#odOn").checked){
         try{
-          labels = await window.odDetect(shot);
-          pass = labels.length>0;
-        }catch{ pass=true; }   // 모델 실패 시 그냥 통과시킨다
+          if(window.odJudge && rules.length){
+            // 완전 로컬: 판정까지 기기 안에서
+            verdict = await window.odJudge(shot, rules);
+            pass = true;                       // 판정 결과는 항상 기록
+          }else if(window.odDetect){
+            labels = await window.odDetect(shot);
+            pass = labels.length>0;            // 관심 대상 없으면 버린다
+          }
+        }catch{ pass=true; }                   // 어떤 실패든 서비스는 계속된다
       }
 
       if(pass){
         sentN++; $("#vSent").textContent=sentN;
+        const hideShot = verdict && $("#noUpload").checked;
         send({t:"detect", kind: soundOnly?"sound":"motion",
-              level: Math.max(motion*4,sound), jpeg:j, labels});
+              level: Math.max(motion*4,sound),
+              jpeg: hideShot ? null : j, labels, verdict});
         flash();
       }else{
         filtN++; $("#vFilt").textContent=filtN;
@@ -340,78 +362,134 @@ $("#btnJoin").onclick=()=>{
 if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
 </script>
 
-<!-- ── 온디바이스 객체 탐지 (transformers.js + WebGPU) ───────────── -->
+<!-- ── 온디바이스 AI (transformers.js + WebGPU) ──────────────────
+     Tier A  Gemma 4 E2B   비전 VLM이 판정까지 기기 안에서 (영상 미전송)
+     Tier B  yolos-tiny    객체 탐지만, 판정은 클라우드
+     Tier C  없음          픽셀 차분만, 판정은 클라우드
+------------------------------------------------------------------ -->
 <script type="module">
 const $=(s)=>document.querySelector(s);
-const CDN = [
-  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4",
-  "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6",
-];
-// 알릴 가치가 있는 대상 (COCO 기준). 이 목록에 없으면 폰에서 버린다.
-const KEEP = new Set(["person","cat","dog","bird","horse","sheep","cow","bear",
+const CDN=["https://cdn.jsdelivr.net/npm/@huggingface/transformers@4",
+           "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.6"];
+const GEMMA="onnx-community/gemma-4-E2B-it-ONNX";
+const YOLO="Xenova/yolos-tiny";
+const KEEP=new Set(["person","cat","dog","bird","horse","sheep","cow","bear",
   "backpack","handbag","suitcase","bottle","cup","laptop","cell phone","book",
   "car","bicycle","motorcycle","truck","chair","couch","bed","dining table"]);
-const THRESH = 0.35;
 
-function setOd(state, text, backend){
-  $("#dOd").className = "dot" + (state==="on" ? " on" : "");
-  $("#sOd").textContent = text;
-  if(backend) $("#pBackend").textContent = backend;
+let mod=null, tier="auto";
+const setOd=(on,t,b,tn)=>{ $("#dOd").className="dot"+(on?" on":"");
+  $("#sOd").textContent=t; if(b)$("#pBackend").textContent=b; if(tn)$("#pTier").textContent=tn; };
+const hint=(h)=>{ $("#odHint").innerHTML=h; };
+
+async function lib(){
+  if(mod) return mod;
+  for(const u of CDN){ try{ mod=await import(/* @vite-ignore */ u); return mod; }catch{} }
+  return null;
 }
 
-async function boot(){
-  let mod=null, lastErr=null;
-  for(const url of CDN){
-    try{ mod = await import(/* @vite-ignore */ url); break; }
-    catch(e){ lastErr=e; }
-  }
-  if(!mod){
-    setOd("off","라이브러리 로드 실패","—");
-    $("#odHint").textContent="온디바이스 필터를 쓸 수 없어 모든 감지를 서버로 보냅니다.";
-    return;
-  }
-
-  // WebGPU 우선, 안 되면 WASM
-  const hasGpu = !!navigator.gpu;
-  let detector=null, backend=null;
-  for(const dev of (hasGpu ? ["webgpu","wasm"] : ["wasm"])){
-    try{
-      setOd("load", `모델 준비 중 (${dev})`, dev.toUpperCase());
-      detector = await mod.pipeline("object-detection","Xenova/yolos-tiny",{
-        device: dev,
-        progress_callback: (p)=>{
-          if(p?.status==="progress" && p.progress!=null)
-            $("#odHint").textContent = `모델 내려받는 중 ${Math.round(p.progress)}%`;
-        },
-      });
-      backend = dev; break;
-    }catch(e){ /* 다음 백엔드로 */ }
-  }
-
-  if(!detector){
-    setOd("off","모델 로드 실패","—");
-    $("#odHint").textContent="온디바이스 필터를 쓸 수 없어 모든 감지를 서버로 보냅니다.";
-    return;
-  }
-
-  setOd("on","작동 중", backend.toUpperCase());
-  $("#odHint").innerHTML = `<b>${backend==="webgpu"?"WebGPU":"WASM"}</b>로 폰 안에서 돌고 있습니다. `
-    + `관심 대상이 없는 장면은 서버로 전송되지 않습니다.`;
-
-  let busy=false;
-  window.odDetect = async (canvas)=>{
-    if(busy) return [{label:"(대기)",score:1}];  // 겹치면 통과시킨다
-    busy=true;
-    try{
-      const out = await detector(canvas, { threshold: THRESH, percentage: true });
-      return (out||[])
-        .filter(o=>KEEP.has(o.label))
-        .slice(0,6)
-        .map(o=>({label:o.label, score:Math.round(o.score*100)}));
-    } finally { busy=false; }
-  };
+/** 기기가 Gemma 4 E2B를 감당할 만한가 (대략적 판단) */
+function canGemma(){
+  if(!navigator.gpu) return false;
+  const mem=navigator.deviceMemory||0;        // GB, 지원 브라우저만
+  if(mem && mem<7) return false;
+  return true;
 }
-boot();
+
+async function bootYolo(m){
+  for(const dev of (navigator.gpu?["webgpu","wasm"]:["wasm"])){
+    try{
+      setOd(false,`탐지 모델 준비 중 (${dev})`,dev.toUpperCase(),"Tier B");
+      const det=await m.pipeline("object-detection",YOLO,{device:dev,
+        progress_callback:p=>{ if(p?.status==="progress"&&p.progress!=null)
+          hint(`탐지 모델 내려받는 중 ${Math.round(p.progress)}%`); }});
+      let busy=false;
+      window.odDetect=async(cv)=>{
+        if(busy) return [{label:"(대기)",score:1}];
+        busy=true;
+        try{
+          const out=await det(cv,{threshold:0.35,percentage:true});
+          return (out||[]).filter(o=>KEEP.has(o.label)).slice(0,6)
+                          .map(o=>({label:o.label,score:Math.round(o.score*100)}));
+        } finally{ busy=false; }
+      };
+      setOd(true,"탐지 작동 중",dev.toUpperCase(),"Tier B");
+      hint(`<b>${dev==="webgpu"?"WebGPU":"WASM"}</b>로 폰 안에서 객체를 1차 판별합니다. `
+          +`관심 대상이 없는 장면은 <b>서버로 보내지 않습니다.</b> 조건 판정은 클라우드 Qwen이 합니다.`);
+      return true;
+    }catch{}
+  }
+  return false;
+}
+
+async function bootGemma(m){
+  try{
+    setOd(false,"Gemma 4 E2B 준비 중","WebGPU","Tier A");
+    hint("Gemma 4 E2B를 내려받는 중입니다. 처음 한 번만 받으며 수백 MB입니다…");
+    const proc=await m.AutoProcessor.from_pretrained(GEMMA);
+    const gm=await m.Gemma4ForConditionalGeneration.from_pretrained(GEMMA,{
+      dtype:"q4f16", device:"webgpu",
+      progress_callback:p=>{ if(p?.status==="progress"&&p.progress!=null)
+        hint(`Gemma 4 E2B 내려받는 중 ${Math.round(p.progress)}%`); },
+    });
+
+    let busy=false;
+    window.odJudge=async(cv,rules)=>{
+      if(busy) return null;
+      busy=true;
+      try{
+        const list=rules.map((r,i)=>`${i+1}. ${r.text}`).join("\n");
+        const sys="너는 가정용 감시 카메라 판독기다. 사진을 보고 아래 조건 중 실제로 "
+          +"충족된 것이 있는지 판단한다. 보이지 않는 것을 추측하지 마라. "
+          +'JSON만 출력: {"match":true|false,"rule":번호 또는 null,"text":"한국어 한 문장"}';
+        const messages=[{role:"system",content:[{type:"text",text:sys}]},
+          {role:"user",content:[{type:"image"},
+            {type:"text",text:`조건:\n${list}\n\n이 사진이 조건을 충족하는가?`}]}];
+        const inputs=await proc(messages,[cv]);
+        const out=await gm.generate({...inputs,max_new_tokens:160,do_sample:false});
+        const txt=proc.batch_decode(out.slice(null,[inputs.input_ids.dims.at(-1),null]),
+                                    {skip_special_tokens:true})[0]||"";
+        const c=txt.replace(/```json|```/g,"");
+        const a=c.indexOf("{"), b=c.lastIndexOf("}");
+        if(a<0||b<=a) return null;
+        const v=JSON.parse(c.slice(a,b+1));
+        return {...v, model:"gemma-4-E2B (on-device)"};
+      }catch{ return null; }
+      finally{ busy=false; }
+    };
+
+    setOd(true,"완전 로컬 판정 중","WebGPU","Tier A");
+    hint("<b>Gemma 4 E2B가 이 기기 안에서</b> 사진을 읽고 조건을 판정합니다. "
+        +"판정이 기기에서 끝나므로 <b>영상이 서버로 나가지 않습니다.</b>");
+    return true;
+  }catch(e){ return false; }
+}
+
+async function boot(pick){
+  window.odJudge=null; window.odDetect=null;
+  tier = pick || "auto";
+  if(tier==="off"){ setOd(false,"사용 안 함","—","끔");
+    hint("온디바이스 필터를 끄면 모든 감지가 서버로 전송됩니다."); return; }
+
+  const m=await lib();
+  if(!m){ setOd(false,"라이브러리 로드 실패","—","—");
+    hint("온디바이스 필터를 쓸 수 없어 모든 감지를 서버로 보냅니다."); return; }
+
+  const wantGemma = tier==="gemma" || (tier==="auto" && canGemma());
+  if(wantGemma && await bootGemma(m)) return;
+  if(tier==="gemma") hint("이 기기에서는 Gemma 4를 띄우지 못해 탐지 모델로 내려갑니다.");
+  if(await bootYolo(m)) return;
+
+  setOd(false,"모델 로드 실패","—","Tier C");
+  hint("온디바이스 모델을 띄우지 못했습니다. 움직임 감지만 기기에서 하고 판정은 클라우드가 합니다.");
+}
+
+document.querySelectorAll(".tier").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tier").forEach(x=>x.classList.remove("primary"));
+  b.classList.add("primary"); boot(b.dataset.t);
+});
+document.querySelector('.tier[data-t="auto"]').classList.add("primary");
+boot("auto");
 </script>
 </body>
 </html>

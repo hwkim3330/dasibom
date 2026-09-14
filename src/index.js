@@ -129,11 +129,27 @@ export class Room {
       level: Math.round((msg.level || 0) * 100) / 100,
       jpeg: msg.jpeg || null,
       onDevice: Array.isArray(msg.labels) ? msg.labels.slice(0, 6) : null, // 폰에서 1차 판별한 결과
+      local: false, // true면 판정까지 기기 안에서 끝났다는 뜻
       alert: false,
       rule: null,
       text: msg.kind === "sound" ? `소리 감지 (크기 ${Math.round((msg.level || 0) * 100)}%)` : "움직임 감지",
       model: null,
     };
+
+    // ── 기기에서 온디바이스 VLM이 이미 판정한 경우: 클라우드 호출 없음 ──
+    if (msg.verdict && typeof msg.verdict === "object") {
+      const v = msg.verdict;
+      const idx = Number(v.rule);
+      const matched = v.match === true && idx >= 1 && idx <= active.length;
+      ev.alert = !!matched;
+      ev.rule = matched ? active[idx - 1].text : null;
+      ev.text = String(v.text || ev.text).slice(0, 200);
+      ev.model = String(v.model || "on-device").slice(0, 60);
+      ev.local = true; // 영상이 서버로 나가지 않았음을 표시
+      await this.saveEvent(ev);
+      this.broadcast({ t: "event", event: ev });
+      return;
+    }
 
     const canAi = msg.jpeg && now - this.lastAiAt > AI_COOLDOWN_MS && this.env.AI;
     if (canAi) {

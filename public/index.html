@@ -23,7 +23,7 @@
       "아기가 침대에서 내려오면 알려줘"
     </div>
     <div class="hint" style="margin-top:10px">
-      움직임이 감지되면 <b>비전 AI(Qwen 3.8 27B)</b>가 그 순간의 화면을 보고
+      움직임이 감지되면 <b>비전 AI</b>가 그 순간의 화면을 보고
       <b>조건이 맞을 때만</b> 알립니다. 기존 홈캠처럼 아무 때나 울리지 않습니다.
     </div>
   </div>
@@ -66,12 +66,29 @@
     <a href="/wall" class="btn" style="width:100%;justify-content:center">🖥 관제 화면 열기</a>
   </div>
 
+  <h2>기기 성능에 맞춰 알아서 내려갑니다</h2>
+  <div class="card">
+    <div class="small" style="line-height:2">
+      <b style="color:var(--accent)">Tier A</b> · 최신 폰·PC<br>
+      <span class="dim">Gemma 4 E2B가 <b>기기 안에서</b> 판정 → 영상이 서버로 나가지 않음</span><br><br>
+      <b style="color:var(--accent)">Tier B</b> · WebGPU 되는 기기<br>
+      <span class="dim">yolos-tiny로 <b>기기 안에서</b> 1차 판별 → 관심 대상 없으면 전송 자체를 안 함</span><br><br>
+      <b style="color:var(--accent)">Tier C</b> · 오래된 폐폰<br>
+      <span class="dim">픽셀 차분만 기기에서, 판정은 클라우드 Qwen 3.8 27B</span>
+    </div>
+    <div class="hint" style="margin-top:10px">
+      같은 링크 하나로 2018년 폐폰부터 최신 기기까지 커버합니다.
+      기기가 좋을수록 <b>영상이 밖으로 덜 나갑니다.</b>
+    </div>
+  </div>
+
   <h2>쓰는 웹 기능</h2>
   <div class="feat">
     <div>📷 카메라 (전·후면 전환)</div>
     <div>🎙 마이크 소리 감지</div>
     <div>🧠 온디바이스 움직임 감지</div>
-    <div>⚡ WebGPU 온디바이스 탐지</div>
+    <div>⚡ WebGPU 온디바이스 추론</div>
+    <div>🔒 기기 내 VLM 판정</div>
     <div>🤖 Qwen 비전 AI 판정</div>
     <div>💡 화면 꺼짐 방지</div>
     <div>🔋 배터리 상태</div>
