@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>다시봄 — 보기</title>
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="row" style="justify-content:space-between;margin-bottom:12px">
+    <h1 style="font-size:20px;margin:0">👁 보기</h1>
+    <a href="/" class="small dim">← 처음으로</a>
+  </div>
+
+  <div class="row" style="margin-bottom:10px">
+    <span class="pill"><i class="dot" id="dNet"></i><span id="sNet">연결 안 됨</span></span>
+    <span class="pill"><i class="dot" id="dCam"></i><span id="sCam">카메라 없음</span></span>
+    <span class="pill" id="pBat">🔋 —</span>
+    <span class="pill" id="pRes">— ×  —</span>
+  </div>
+
+  <div class="stage" id="stage">
+    <img id="live" alt="실시간 화면">
+    <div class="overlay">
+      <span class="badge mono" id="bCode">—</span>
+      <span class="badge" id="bFace">—</span>
+      <span class="badge" id="bFps">0 fps</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="row">
+      <button id="btnFlip" class="grow" style="justify-content:center">🔄 카메라 전환</button>
+      <button id="btnTorch" class="grow" style="justify-content:center">🔦 플래시</button>
+      <button id="btnShot" class="grow" style="justify-content:center">📸 지금 촬영</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnNoti" class="grow" style="justify-content:center">🔔 알림 켜기</button>
+      <button id="btnSum" class="primary grow" style="justify-content:center">🤖 AI 요약</button>
+    </div>
+    <div id="summary" class="hint" style="display:none"></div>
+  </div>
+
+  <div class="row" style="justify-content:space-between;align-items:center">
+    <h2 style="margin:8px 0">활동 기록 <span class="dim small" id="evCount"></span></h2>
+    <button id="btnClear" class="small danger">기록 지우기</button>
+  </div>
+  <div class="events" id="events"></div>
+
+  <div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0;font-size:15px">방 코드</h2>
+    <div class="row">
+      <input id="codeIn" class="code mono" maxlength="8" aria-label="방 코드">
+      <button id="btnJoin">접속</button>
+    </div>
+  </div>
+
+  <footer>다시봄 · 보기 모드</footer>
+</div>
+
+<script>
+const $=(s)=>document.querySelector(s);
+const qs=new URLSearchParams(location.search);
+let code=(qs.get("room")||localStorage.getItem("dasibom:code")||"").toUpperCase();
+$("#codeIn").value=code; $("#bCode").textContent=code||"—";
+
+let ws=null, frames=0, lastFpsAt=Date.now(), notiOn=false, events=[];
+
+function connect(){
+  if(!code||code.length<4) return;
+  try{ ws&&ws.close(); }catch{}
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/api/room/${code}/ws?role=viewer`);
+  ws.onopen=()=>setNet(true);
+  ws.onclose=()=>{ setNet(false); setTimeout(connect,2500); };
+  ws.onerror=()=>setNet(false);
+  ws.onmessage=(e)=>handle(JSON.parse(e.data));
+}
+function setNet(on){
+  $("#dNet").className="dot"+(on?" on":"");
+  $("#sNet").textContent=on?"연결됨":"연결 안 됨";
+}
+function setCam(n){
+  $("#dCam").className="dot"+(n>0?" on":"");
+  $("#sCam").textContent=n>0?"카메라 연결됨":"카메라 없음";
+}
+function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+
+function handle(m){
+  if(m.t==="welcome"){ setCam(m.counts.cam); events=m.events||[]; renderAll(); }
+  if(m.t==="counts") setCam(m.counts.cam);
+  if(m.t==="frame"){
+    $("#live").src=m.jpeg; frames++;
+    const now=Date.now();
+    if(now-lastFpsAt>1000){
+      $("#bFps").textContent=`${Math.round(frames*1000/(now-lastFpsAt))} fps`;
+      frames=0; lastFpsAt=now;
+    }
+  }
+  if(m.t==="status"){
+    const s=m.status||{};
+    if(s.battery) $("#pBat").textContent=`${s.battery.charging?"⚡":"🔋"} ${s.battery.level}%`;
+    if(s.width) $("#pRes").textContent=`${s.width} × ${s.height}`;
+    if(s.facing) $("#bFace").textContent=s.facing;
+  }
+  if(m.t==="event"){ events.push(m.event); renderAll(); notify(m.event); }
+  if(m.t==="cleared"){ events=[]; renderAll(); }
+}
+
+function renderAll(){
+  const box=$("#events");
+  box.innerHTML="";
+  $("#evCount").textContent=events.length?`(${events.length}건)`:"";
+  if(!events.length){
+    box.innerHTML='<div class="card small dim" style="margin:0">아직 감지된 활동이 없습니다.</div>';
+    return;
+  }
+  for(const e of [...events].reverse()){
+    const d=document.createElement("div");
+    d.className="event";
+    const img=e.jpeg?`<img src="${e.jpeg}" alt="">`:"";
+    const tags=(e.labels||[]).map(l=>`<span class="pill" style="padding:2px 8px;font-size:11px">${l.label} ${l.score}%</span>`).join(" ");
+    d.innerHTML=`${img}<div class="grow"><div class="d">${e.text||"감지"}</div>
+      <div class="t">${fmt(e.ts)} ${tags}</div></div>`;
+    box.appendChild(d);
+  }
+}
+function fmt(ts){
+  const d=new Date(ts);
+  return d.toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
+}
+
+async function notify(e){
+  try{ navigator.vibrate?.([90,50,90]); }catch{}
+  if(!notiOn||Notification.permission!=="granted") return;
+  try{
+    new Notification("다시봄 — 활동 감지", { body:`${e.text}\n${fmt(e.ts)}`, icon:"/icon.svg", tag:"dasibom" });
+  }catch{}
+}
+
+$("#btnNoti").onclick=async()=>{
+  try{
+    const p=await Notification.requestPermission();
+    notiOn = p==="granted";
+    $("#btnNoti").textContent = notiOn ? "🔔 알림 켜짐" : "🔕 알림 거부됨";
+  }catch{ $("#btnNoti").textContent="🔕 지원 안 함"; }
+};
+$("#btnFlip").onclick=()=>send({t:"cmd",cmd:"flip"});
+$("#btnTorch").onclick=()=>send({t:"cmd",cmd:"torch"});
+$("#btnShot").onclick=()=>send({t:"cmd",cmd:"snapshot"});
+$("#btnClear").onclick=async()=>{
+  if(!confirm("활동 기록을 모두 지울까요?")) return;
+  await fetch(`/api/room/${code}/clear`);
+};
+$("#btnSum").onclick=async()=>{
+  const box=$("#summary");
+  box.style.display="block"; box.textContent="AI가 기록을 읽는 중…";
+  try{
+    const r=await fetch(`/api/room/${code}/summary`);
+    const j=await r.json();
+    box.innerHTML=`<b>🤖 AI 요약</b><br>${(j.text||"").replace(/\n/g,"<br>")}`;
+  }catch(e){ box.textContent="요약에 실패했습니다."; }
+};
+$("#btnJoin").onclick=()=>{
+  code=$("#codeIn").value.toUpperCase().replace(/[^A-Z0-9]/g,"");
+  $("#bCode").textContent=code; localStorage.setItem("dasibom:code",code);
+  connect();
+};
+
+renderAll();
+connect();
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+</script>
+</body>
+</html>

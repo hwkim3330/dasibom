@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>다시봄 — 카메라</title>
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap center">
+  <div class="row" style="justify-content:space-between;margin-bottom:12px">
+    <h1 style="font-size:20px;margin:0">📷 카메라 모드</h1>
+    <a href="/" class="small dim">← 처음으로</a>
+  </div>
+
+  <div class="row" style="margin-bottom:10px">
+    <span class="pill"><i class="dot" id="dNet"></i><span id="sNet">연결 안 됨</span></span>
+    <span class="pill"><i class="dot" id="dRec"></i><span id="sRec">대기</span></span>
+    <span class="pill" id="pView">👁 0명</span>
+    <span class="pill" id="pBat">🔋 —</span>
+  </div>
+
+  <div class="stage" id="stage">
+    <video id="v" playsinline muted autoplay></video>
+    <div class="overlay">
+      <span class="badge mono" id="bCode">—</span>
+      <span class="badge" id="bFace">후면</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="row">
+      <button id="btnStart" class="primary grow" style="justify-content:center">감시 시작</button>
+      <button id="btnStop" class="danger" disabled>정지</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnFlip" class="grow" style="justify-content:center">🔄 전·후면 전환</button>
+      <button id="btnTorch">🔦 플래시</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <span class="small">움직임 감도</span><span class="small mono dim" id="lblSens">보통</span>
+    </div>
+    <input type="range" id="sens" min="1" max="9" value="5" style="padding:0;margin-top:8px">
+    <div class="grid2" style="margin-top:12px">
+      <div class="stat">움직임 <b id="vMot">0%</b><div class="meter"><i id="mMot"></i></div></div>
+      <div class="stat">소리 <b id="vSnd">0%</b><div class="meter"><i id="mSnd"></i></div></div>
+    </div>
+    <div class="hint" id="hint">
+      시작을 누르면 카메라·마이크 권한을 묻습니다. 화면이 꺼지지 않도록 자동으로 잡아둡니다.<br>
+      <b>충전기를 꽂아두세요.</b> 영상은 움직임이 있을 때만 서버로 전송됩니다.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0;font-size:15px">방 코드</h2>
+    <div class="row">
+      <input id="codeIn" class="code mono" maxlength="8" aria-label="방 코드">
+      <button id="btnJoin">접속</button>
+    </div>
+  </div>
+
+  <footer>다시봄 · 카메라 모드</footer>
+</div>
+
+<script>
+const $=(s)=>document.querySelector(s);
+const qs=new URLSearchParams(location.search);
+let code=(qs.get("room")||localStorage.getItem("dasibom:code")||"").toUpperCase();
+$("#codeIn").value=code; $("#bCode").textContent=code||"—";
+
+let ws=null, stream=null, track=null, running=false;
+let facing="environment", devices=[], devIdx=0;
+let viewers=0, torchOn=false, wakeLock=null;
+let audioCtx=null, analyser=null, sndData=null;
+let prev=null, lastDetect=0, lastFrame=0, motion=0, sound=0;
+
+const v=$("#v");
+const work=document.createElement("canvas");            // 감지용 저해상도
+const wctx=work.getContext("2d",{willReadFrequently:true});
+work.width=64; work.height=48;
+const shot=document.createElement("canvas");            // 전송용
+const sctx=shot.getContext("2d");
+
+const SENS=[null,0.045,0.035,0.028,0.022,0.017,0.013,0.010,0.007,0.005];
+const sensLabels=[null,"매우 둔감","둔감","조금 둔감","보통보다 둔감","보통","조금 예민","예민","매우 예민","극도로 예민"];
+$("#sens").oninput=e=>{ $("#lblSens").textContent=sensLabels[+e.target.value]; };
+
+/* ── WebSocket ───────────────────────────── */
+function connect(){
+  if(!code||code.length<4){ note("방 코드를 입력하세요."); return; }
+  try{ ws&&ws.close(); }catch{}
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/api/room/${code}/ws?role=cam`);
+  ws.onopen=()=>{ setNet(true); sendStatus(); };
+  ws.onclose=()=>{ setNet(false); if(running) setTimeout(connect,2500); };
+  ws.onerror=()=>setNet(false);
+  ws.onmessage=(e)=>{
+    const m=JSON.parse(e.data);
+    if(m.t==="welcome"||m.t==="counts"){ viewers=m.counts.viewer; $("#pView").textContent=`👁 ${viewers}명`; }
+    if(m.t==="cmd") onCmd(m.cmd,m.value);
+  };
+}
+function setNet(on){
+  $("#dNet").className="dot"+(on?" on":"");
+  $("#sNet").textContent=on?"연결됨":"연결 안 됨";
+}
+function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+
+function onCmd(cmd,val){
+  if(cmd==="flip") flip();
+  if(cmd==="torch") toggleTorch();
+  if(cmd==="snapshot") capture().then(j=>j&&send({t:"detect",kind:"motion",level:0,jpeg:j}));
+}
+
+/* ── 카메라 ──────────────────────────────── */
+async function openCamera(){
+  stopTracks();
+  const base={audio:{echoCancellation:false,noiseSuppression:false},video:{width:{ideal:640},height:{ideal:480}}};
+  if(devices.length>1 && devices[devIdx]) base.video.deviceId={exact:devices[devIdx].deviceId};
+  else base.video.facingMode={ideal:facing};
+  stream=await navigator.mediaDevices.getUserMedia(base);
+  v.srcObject=stream;
+  track=stream.getVideoTracks()[0];
+  await v.play().catch(()=>{});
+  try{
+    devices=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+  }catch{}
+  const s=track.getSettings?.()||{};
+  const isFront = s.facingMode ? s.facingMode==="user" : facing==="user";
+  $("#bFace").textContent = isFront ? "전면" : "후면";
+  v.style.transform = isFront ? "scaleX(-1)" : "";
+  setupAudio();
+  sendStatus();
+}
+function stopTracks(){ if(stream) stream.getTracks().forEach(t=>t.stop()); stream=null; track=null; }
+
+async function flip(){
+  if(devices.length>1){ devIdx=(devIdx+1)%devices.length; }
+  facing = facing==="environment" ? "user" : "environment";
+  prev=null;
+  try{ await openCamera(); }catch(e){ note("카메라 전환 실패: "+e.message); }
+}
+
+async function toggleTorch(){
+  if(!track) return;
+  const caps=track.getCapabilities?.()||{};
+  if(!caps.torch){ note("이 기기는 플래시 제어를 지원하지 않습니다."); return; }
+  torchOn=!torchOn;
+  try{ await track.applyConstraints({advanced:[{torch:torchOn}]}); }
+  catch{ note("플래시를 켜지 못했습니다."); }
+}
+
+/* ── 소리 ────────────────────────────────── */
+function setupAudio(){
+  const a=stream.getAudioTracks();
+  if(!a.length) return;
+  try{
+    audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+    const src=audioCtx.createMediaStreamSource(stream);
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=512;
+    sndData=new Uint8Array(analyser.fftSize);
+    src.connect(analyser);
+    audioCtx.resume?.();
+  }catch{}
+}
+function soundLevel(){
+  if(!analyser) return 0;
+  analyser.getByteTimeDomainData(sndData);
+  let sum=0;
+  for(let i=0;i<sndData.length;i++){ const d=(sndData[i]-128)/128; sum+=d*d; }
+  return Math.min(1,Math.sqrt(sum/sndData.length)*4);
+}
+
+/* ── 움직임 감지 (온디바이스) ─────────────── */
+function motionLevel(){
+  if(!v.videoWidth) return 0;
+  wctx.drawImage(v,0,0,work.width,work.height);
+  const cur=wctx.getImageData(0,0,work.width,work.height).data;
+  if(!prev){ prev=cur.slice(0); return 0; }
+  let diff=0;
+  for(let i=0;i<cur.length;i+=4){
+    const g1=(cur[i]*299+cur[i+1]*587+cur[i+2]*114)/1000;
+    const g2=(prev[i]*299+prev[i+1]*587+prev[i+2]*114)/1000;
+    if(Math.abs(g1-g2)>22) diff++;
+  }
+  prev=cur.slice(0);
+  return diff/(cur.length/4);
+}
+
+async function capture(w=480,q=0.55){
+  if(!v.videoWidth) return null;
+  const r=v.videoHeight/v.videoWidth;
+  shot.width=w; shot.height=Math.round(w*r);
+  sctx.drawImage(v,0,0,shot.width,shot.height);
+  return shot.toDataURL("image/jpeg",q);
+}
+
+/* ── 메인 루프 ───────────────────────────── */
+async function loop(){
+  if(!running) return;
+  if(document.visibilityState==="visible" || true){
+    motion=motionLevel(); sound=soundLevel();
+    $("#vMot").textContent=Math.round(motion*100)+"%";
+    $("#vSnd").textContent=Math.round(sound*100)+"%";
+    $("#mMot").style.width=Math.min(100,motion*400)+"%";
+    $("#mSnd").style.width=Math.round(sound*100)+"%";
+
+    const now=Date.now();
+    // 뷰어가 볼 때만 미리보기 전송 (2fps)
+    if(viewers>0 && now-lastFrame>500){
+      lastFrame=now;
+      const j=await capture(320,0.42);
+      if(j) send({t:"frame",jpeg:j});
+    }
+    // 감지 이벤트 (최소 6초 간격)
+    const th=SENS[+$("#sens").value];
+    const hit = motion>th || sound>0.55;
+    if(hit && now-lastDetect>6000){
+      lastDetect=now;
+      const j=await capture(480,0.55);
+      send({t:"detect",kind: sound>0.55&&motion<=th ? "sound":"motion", level: Math.max(motion*4,sound), jpeg:j});
+      flash();
+    }
+  }
+  setTimeout(loop,220);
+}
+function flash(){
+  const s=$("#stage"); s.style.outline="3px solid var(--accent)";
+  setTimeout(()=>s.style.outline="",450);
+}
+
+/* ── 부가 웹 기능 ─────────────────────────── */
+async function keepAwake(){
+  try{ wakeLock=await navigator.wakeLock.request("screen"); }
+  catch{ note("화면 꺼짐 방지를 지원하지 않는 브라우저입니다. 화면 자동잠금을 꺼주세요."); }
+}
+document.addEventListener("visibilitychange",()=>{
+  if(document.visibilityState==="visible" && running && !wakeLock) keepAwake();
+});
+async function battery(){
+  try{
+    const b=await navigator.getBattery();
+    const up=()=>{ $("#pBat").textContent=`${b.charging?"⚡":"🔋"} ${Math.round(b.level*100)}%`; sendStatus(); };
+    up(); b.addEventListener("levelchange",up); b.addEventListener("chargingchange",up);
+  }catch{ $("#pBat").textContent="🔋 —"; }
+}
+async function sendStatus(){
+  let bat=null;
+  try{ const b=await navigator.getBattery(); bat={level:Math.round(b.level*100),charging:b.charging}; }catch{}
+  const s=track?.getSettings?.()||{};
+  send({t:"status",status:{
+    battery:bat, width:s.width, height:s.height,
+    facing: $("#bFace").textContent, ua:navigator.userAgent.slice(0,120)
+  }});
+}
+function note(t){ $("#hint").innerHTML=t; }
+
+/* ── 시작 / 정지 ─────────────────────────── */
+$("#btnStart").onclick=async()=>{
+  if(!code||code.length<4){ note("방 코드를 먼저 입력하세요."); return; }
+  try{
+    await openCamera();
+  }catch(e){
+    note("카메라를 열지 못했습니다: "+e.message+"<br>HTTPS 환경인지, 권한을 허용했는지 확인하세요.");
+    return;
+  }
+  running=true;
+  $("#btnStart").disabled=true; $("#btnStop").disabled=false;
+  $("#dRec").className="dot rec"; $("#sRec").textContent="감시 중";
+  connect(); keepAwake(); battery(); loop();
+  try{ await screen.orientation.lock("portrait"); }catch{}
+  note("감시 중입니다. 이 화면을 켜둔 채로 두세요. 다른 기기에서 <b>보기</b> 링크를 열면 실시간 화면이 보입니다.");
+};
+$("#btnStop").onclick=()=>{
+  running=false; stopTracks();
+  try{ ws&&ws.close(); }catch{}
+  try{ wakeLock&&wakeLock.release(); }catch{} wakeLock=null;
+  $("#btnStart").disabled=false; $("#btnStop").disabled=true;
+  $("#dRec").className="dot"; $("#sRec").textContent="대기";
+  note("정지했습니다.");
+};
+$("#btnFlip").onclick=flip;
+$("#btnTorch").onclick=toggleTorch;
+$("#btnJoin").onclick=()=>{
+  code=$("#codeIn").value.toUpperCase().replace(/[^A-Z0-9]/g,"");
+  $("#bCode").textContent=code; localStorage.setItem("dasibom:code",code);
+  if(running) connect();
+};
+if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+</script>
+</body>
+</html>

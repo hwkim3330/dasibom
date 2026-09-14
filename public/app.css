@@ -1,0 +1,69 @@
+:root{
+  --bg:#0b0f14; --panel:#141a22; --panel2:#1c2530; --line:#27323f;
+  --fg:#e8eef5; --dim:#93a3b5; --accent:#4ade80; --warn:#fbbf24; --danger:#f87171;
+  --radius:14px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,-apple-system,sans-serif;
+  -webkit-text-size-adjust:100%; line-height:1.6;
+}
+a{color:var(--accent);text-decoration:none}
+.wrap{max-width:960px;margin:0 auto;padding:20px}
+.center{max-width:560px}
+h1{font-size:26px;margin:0 0 6px;letter-spacing:-.5px}
+h2{font-size:17px;margin:26px 0 10px;color:var(--fg)}
+.sub{color:var(--dim);margin:0 0 22px;font-size:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.grow{flex:1;min-width:0}
+button,.btn{
+  background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+  border-radius:10px;padding:11px 15px;font-size:15px;cursor:pointer;
+  font-family:inherit;transition:.15s;display:inline-flex;align-items:center;gap:7px;
+}
+button:hover,.btn:hover{background:#25313f;border-color:#3a4859}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.primary{background:var(--accent);color:#07140c;border-color:var(--accent);font-weight:700}
+.primary:hover{background:#3ecb70;border-color:#3ecb70}
+.danger{background:#3a1d1d;border-color:#5d2b2b;color:#fca5a5}
+input{
+  background:#0e141b;border:1px solid var(--line);border-radius:10px;
+  color:var(--fg);padding:11px 13px;font-size:16px;font-family:inherit;width:100%;
+}
+input.code{font-size:26px;letter-spacing:5px;text-align:center;font-weight:700;text-transform:uppercase}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.dim{color:var(--dim)}
+.small{font-size:13px}
+.pill{
+  display:inline-flex;align-items:center;gap:6px;background:var(--panel2);
+  border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:12.5px;color:var(--dim)
+}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.dot.rec{background:var(--danger);animation:pulse 1.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+video,canvas.preview{width:100%;border-radius:12px;background:#000;display:block}
+.stage{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:4/3}
+.stage img,.stage video{width:100%;height:100%;object-fit:contain;display:block}
+.stage .overlay{position:absolute;left:10px;top:10px;display:flex;gap:6px;flex-wrap:wrap}
+.badge{background:rgba(0,0,0,.6);backdrop-filter:blur(6px);border-radius:8px;padding:4px 9px;font-size:12px}
+.events{display:flex;flex-direction:column;gap:8px;max-height:460px;overflow-y:auto}
+.event{display:flex;gap:11px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px;align-items:center}
+.event img{width:76px;height:57px;object-fit:cover;border-radius:7px;background:#000;flex:none}
+.event .t{font-size:13px;color:var(--dim)}
+.event .d{font-size:14.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:19px;margin-top:2px}
+.meter{height:6px;background:#0e141b;border-radius:99px;overflow:hidden;margin-top:7px}
+.meter i{display:block;height:100%;background:var(--accent);width:0;transition:width .12s}
+.hint{font-size:13px;color:var(--dim);margin-top:8px;line-height:1.65}
+.feat{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:6px}
+.feat div{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px}
+.big{font-size:44px;text-align:center;letter-spacing:8px;font-weight:800;margin:6px 0;color:var(--accent)}
+footer{color:var(--dim);font-size:12.5px;text-align:center;padding:26px 0 40px}
+@media(max-width:560px){.grid2{grid-template-columns:1fr}h1{font-size:22px}}

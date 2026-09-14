@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>다시봄 — 서랍 속 헌 폰을 AI 홈캠으로</title>
+<meta name="description" content="앱 설치 없이 링크 하나로. 안 쓰는 스마트폰이 AI 홈캠이 됩니다.">
+<meta name="theme-color" content="#0b0f14">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="wrap center">
+  <h1>다시봄</h1>
+  <p class="sub">서랍 속 헌 폰을 <b>앱 설치 없이</b> AI 홈캠으로.<br>링크만 열면 끝납니다.</p>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <span class="dim small">방 코드</span>
+      <button id="regen" class="small">다시 만들기</button>
+    </div>
+    <div class="big mono" id="code">······</div>
+    <div class="row">
+      <input id="codeIn" class="code mono" maxlength="8" placeholder="코드 입력" aria-label="방 코드">
+    </div>
+    <div class="hint">같은 코드를 넣은 기기끼리 연결됩니다. 코드는 아무에게도 알려주지 마세요.</div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">① 헌 폰에서 열기</h2>
+    <p class="small dim" style="margin:0 0 10px">카메라가 될 기기입니다. 안드로이드 크롬 권장.</p>
+    <a id="camLink" class="btn primary" style="width:100%;justify-content:center">이 기기를 카메라로 쓰기</a>
+    <div class="row" style="margin-top:10px">
+      <input id="camUrl" class="mono small" readonly aria-label="카메라 링크">
+      <button id="copyCam">복사</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">② 보는 기기에서 열기</h2>
+    <p class="small dim" style="margin:0 0 10px">아이폰·노트북 등 아무 브라우저나 됩니다.</p>
+    <a id="viewLink" class="btn" style="width:100%;justify-content:center">카메라 보기</a>
+    <div class="row" style="margin-top:10px">
+      <input id="viewUrl" class="mono small" readonly aria-label="뷰어 링크">
+      <button id="copyView">복사</button>
+    </div>
+  </div>
+
+  <h2>쓰는 웹 기능</h2>
+  <div class="feat">
+    <div>📷 카메라 (전·후면 전환)</div>
+    <div>🎙 마이크 소리 감지</div>
+    <div>🧠 온디바이스 움직임 감지</div>
+    <div>🤖 Workers AI 객체 인식</div>
+    <div>💡 화면 꺼짐 방지</div>
+    <div>🔋 배터리 상태</div>
+    <div>🔦 플래시 원격 제어</div>
+    <div>🔔 알림 · 진동</div>
+    <div>📲 홈 화면 설치(PWA)</div>
+    <div>🔌 실시간 WebSocket</div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h2 style="margin-top:0">왜 만들었나</h2>
+    <p class="small dim" style="margin:0">
+      안 쓰는 스마트폰은 카메라·마이크·연산장치·화면·통신이 전부 달린 멀쩡한 컴퓨터입니다.
+      그런데 대부분 서랍에서 방전된 채 잠들어 있습니다. 홈캠은 따로 사면 5~10만원이고요.<br><br>
+      다시봄은 <b>새 기기를 사지 않고</b>, <b>앱도 깔지 않고</b>, 브라우저 하나로 그 폰을 되살립니다.
+      영상은 기기 안에서 먼저 분석해 <b>움직임이 있을 때만</b> 서버로 보냅니다.
+    </p>
+  </div>
+
+  <footer>
+    다시봄 · 헌 폰 재사용 AI 홈캠 · Cloudflare Workers + Workers AI<br>
+    <a href="https://github.com/hwkim3330/dasibom">GitHub</a>
+  </footer>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let code = "";
+
+function setCode(c){
+  code = (c||"").toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,8);
+  $("#code").textContent = code || "······";
+  $("#codeIn").value = code;
+  const base = location.origin;
+  const cam = `${base}/cam?room=${code}`;
+  const view = `${base}/view?room=${code}`;
+  $("#camLink").href = cam;  $("#camUrl").value = cam;
+  $("#viewLink").href = view; $("#viewUrl").value = view;
+  const ok = code.length >= 4;
+  $("#camLink").style.pointerEvents = ok ? "" : "none";
+  $("#viewLink").style.pointerEvents = ok ? "" : "none";
+  $("#camLink").style.opacity = ok ? 1 : .4;
+  $("#viewLink").style.opacity = ok ? 1 : .4;
+  try{ localStorage.setItem("dasibom:code", code); }catch{}
+}
+
+async function newCode(){
+  try{
+    const r = await fetch("/api/new-room");
+    setCode((await r.json()).code);
+  }catch{
+    const A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    setCode(Array.from({length:6},()=>A[Math.floor(Math.random()*A.length)]).join(""));
+  }
+}
+
+$("#regen").onclick = newCode;
+$("#codeIn").oninput = (e) => setCode(e.target.value);
+for (const [btn,inp] of [["#copyCam","#camUrl"],["#copyView","#viewUrl"]]){
+  $(btn).onclick = async () => {
+    try{
+      await navigator.clipboard.writeText($(inp).value);
+      $(btn).textContent = "복사됨"; setTimeout(()=>$(btn).textContent="복사",1200);
+    }catch{ $(inp).select(); }
+  };
+}
+
+const saved = (()=>{ try{ return localStorage.getItem("dasibom:code"); }catch{ return null; } })();
+const q = new URLSearchParams(location.search).get("room");
+if (q) setCode(q); else if (saved) setCode(saved); else newCode();
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
+</script>
+</body>
+</html>
