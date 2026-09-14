@@ -20,7 +20,7 @@
     <span class="pill"><i class="dot" id="dNet"></i><span id="sNet">연결 안 됨</span></span>
     <span class="pill"><i class="dot" id="dCam"></i><span id="sCam">카메라 없음</span></span>
     <span class="pill" id="pBat">🔋 —</span>
-    <span class="pill" id="pRes">— ×  —</span>
+    <span class="pill" id="pRes">—</span>
   </div>
 
   <div class="stage" id="stage">
@@ -32,7 +32,27 @@
     </div>
   </div>
 
-  <div class="card" style="margin-top:12px">
+  <!-- ── 자연어 알림 규칙 ───────────────────────── -->
+  <div class="card" style="margin-top:12px;border-color:#2f5e42">
+    <h2 style="margin:0 0 4px;font-size:16px">🗣 말로 설정하는 알림</h2>
+    <p class="small dim" style="margin:0 0 10px">
+      무엇을 알려줄지 한국어로 쓰세요. 움직임이 감지되면 <b>비전 AI가 화면을 보고</b> 조건이 맞을 때만 알립니다.
+    </p>
+    <div class="row">
+      <input id="ruleIn" class="grow" maxlength="120" placeholder="예: 고양이가 식탁에 올라가면 알려줘">
+      <button id="btnAdd" class="primary">추가</button>
+    </div>
+    <div class="row" style="margin-top:8px;gap:6px">
+      <button class="small ex">사람이 보이면 알려줘</button>
+      <button class="small ex">택배 상자가 놓이면 알려줘</button>
+      <button class="small ex">고양이가 식탁에 올라가면 알려줘</button>
+      <button class="small ex">불이 켜져 있으면 알려줘</button>
+    </div>
+    <div id="rules" style="margin-top:12px"></div>
+    <div class="hint" id="ruleHint">규칙이 없으면 AI가 감지된 장면을 한국어로 설명만 합니다.</div>
+  </div>
+
+  <div class="card">
     <div class="row">
       <button id="btnFlip" class="grow" style="justify-content:center">🔄 카메라 전환</button>
       <button id="btnTorch" class="grow" style="justify-content:center">🔦 플래시</button>
@@ -59,17 +79,18 @@
     </div>
   </div>
 
-  <footer>다시봄 · 보기 모드</footer>
+  <footer>다시봄 · 보기 모드 · 판독 모델 <span class="mono" id="fModel">Qwen 3.8 27B</span></footer>
 </div>
 
 <script>
-const $=(s)=>document.querySelector(s);
+const $=(s)=>document.querySelector(s), $$=(s)=>[...document.querySelectorAll(s)];
 const qs=new URLSearchParams(location.search);
 let code=(qs.get("room")||localStorage.getItem("dasibom:code")||"").toUpperCase();
 $("#codeIn").value=code; $("#bCode").textContent=code||"—";
 
-let ws=null, frames=0, lastFpsAt=Date.now(), notiOn=false, events=[];
+let ws=null, frames=0, lastFpsAt=Date.now(), notiOn=false, events=[], rules=[];
 
+/* ── 연결 ─────────────────────────────── */
 function connect(){
   if(!code||code.length<4) return;
   try{ ws&&ws.close(); }catch{}
@@ -80,99 +101,119 @@ function connect(){
   ws.onerror=()=>setNet(false);
   ws.onmessage=(e)=>handle(JSON.parse(e.data));
 }
-function setNet(on){
-  $("#dNet").className="dot"+(on?" on":"");
-  $("#sNet").textContent=on?"연결됨":"연결 안 됨";
-}
-function setCam(n){
-  $("#dCam").className="dot"+(n>0?" on":"");
-  $("#sCam").textContent=n>0?"카메라 연결됨":"카메라 없음";
-}
-function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+const setNet=(on)=>{ $("#dNet").className="dot"+(on?" on":""); $("#sNet").textContent=on?"연결됨":"연결 안 됨"; };
+const setCam=(n)=>{ $("#dCam").className="dot"+(n>0?" on":""); $("#sCam").textContent=n>0?"카메라 연결됨":"카메라 없음"; };
+const send=(o)=>{ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); };
 
 function handle(m){
-  if(m.t==="welcome"){ setCam(m.counts.cam); events=m.events||[]; renderAll(); }
+  if(m.t==="welcome"){ setCam(m.counts.cam); events=m.events||[]; rules=m.rules||[]; renderRules(); renderEvents(); }
   if(m.t==="counts") setCam(m.counts.cam);
+  if(m.t==="rules"){ rules=m.rules||[]; renderRules(); }
   if(m.t==="frame"){
     $("#live").src=m.jpeg; frames++;
     const now=Date.now();
-    if(now-lastFpsAt>1000){
-      $("#bFps").textContent=`${Math.round(frames*1000/(now-lastFpsAt))} fps`;
-      frames=0; lastFpsAt=now;
-    }
+    if(now-lastFpsAt>1000){ $("#bFps").textContent=`${Math.round(frames*1000/(now-lastFpsAt))} fps`; frames=0; lastFpsAt=now; }
   }
   if(m.t==="status"){
     const s=m.status||{};
     if(s.battery) $("#pBat").textContent=`${s.battery.charging?"⚡":"🔋"} ${s.battery.level}%`;
-    if(s.width) $("#pRes").textContent=`${s.width} × ${s.height}`;
+    if(s.width) $("#pRes").textContent=`${s.width}×${s.height}`;
     if(s.facing) $("#bFace").textContent=s.facing;
   }
-  if(m.t==="event"){ events.push(m.event); renderAll(); notify(m.event); }
-  if(m.t==="cleared"){ events=[]; renderAll(); }
+  if(m.t==="event"){ events.push(m.event); renderEvents(); notify(m.event); }
+  if(m.t==="cleared"){ events=[]; renderEvents(); }
 }
 
-function renderAll(){
-  const box=$("#events");
-  box.innerHTML="";
+/* ── 규칙 ─────────────────────────────── */
+async function saveRules(){
+  const r=await fetch(`/api/room/${code}/rules`,{
+    method:"PUT", headers:{"content-type":"application/json"},
+    body:JSON.stringify({rules})
+  });
+  rules=(await r.json()).rules||[]; renderRules();
+}
+function renderRules(){
+  const box=$("#rules"); box.innerHTML="";
+  $("#ruleHint").textContent = rules.length
+    ? `규칙 ${rules.length}개. 조건이 맞을 때만 알림이 옵니다. (최대 5개)`
+    : "규칙이 없으면 AI가 감지된 장면을 한국어로 설명만 합니다.";
+  rules.forEach((r,i)=>{
+    const d=document.createElement("div");
+    d.className="event"; d.style.padding="8px 10px";
+    d.innerHTML=`<label class="row grow" style="gap:8px;cursor:pointer;margin:0">
+        <input type="checkbox" ${r.enabled?"checked":""} style="width:auto">
+        <span class="grow" style="font-size:14.5px">${esc(r.text)}</span>
+      </label><button class="small danger">삭제</button>`;
+    d.querySelector("input").onchange=(e)=>{ rules[i].enabled=e.target.checked; saveRules(); };
+    d.querySelector("button").onclick=()=>{ rules.splice(i,1); saveRules(); };
+    box.appendChild(d);
+  });
+}
+function addRule(text){
+  text=(text||"").trim();
+  if(!text) return;
+  if(rules.length>=5){ alert("규칙은 최대 5개까지입니다."); return; }
+  rules.push({id:String(Date.now()),text,enabled:true});
+  $("#ruleIn").value=""; saveRules();
+}
+$("#btnAdd").onclick=()=>addRule($("#ruleIn").value);
+$("#ruleIn").onkeydown=(e)=>{ if(e.key==="Enter") addRule(e.target.value); };
+$$(".ex").forEach(b=>b.onclick=()=>addRule(b.textContent));
+
+/* ── 이벤트 ───────────────────────────── */
+function renderEvents(){
+  const box=$("#events"); box.innerHTML="";
   $("#evCount").textContent=events.length?`(${events.length}건)`:"";
-  if(!events.length){
-    box.innerHTML='<div class="card small dim" style="margin:0">아직 감지된 활동이 없습니다.</div>';
-    return;
-  }
+  if(!events.length){ box.innerHTML='<div class="card small dim" style="margin:0">아직 감지된 활동이 없습니다.</div>'; return; }
   for(const e of [...events].reverse()){
     const d=document.createElement("div");
     d.className="event";
+    if(e.alert) d.style.borderColor="var(--accent)";
     const img=e.jpeg?`<img src="${e.jpeg}" alt="">`:"";
-    const tags=(e.labels||[]).map(l=>`<span class="pill" style="padding:2px 8px;font-size:11px">${l.label} ${l.score}%</span>`).join(" ");
-    d.innerHTML=`${img}<div class="grow"><div class="d">${e.text||"감지"}</div>
-      <div class="t">${fmt(e.ts)} ${tags}</div></div>`;
+    const badge=e.alert?'<span class="pill" style="padding:2px 8px;font-size:11px;border-color:var(--accent);color:var(--accent)">🔔 알림</span> ':"";
+    const rule=e.rule?`<span class="t">조건: ${esc(e.rule)}</span>`:"";
+    d.innerHTML=`${img}<div class="grow">
+        <div class="d">${badge}${esc(e.text||"감지")}</div>
+        <div class="t">${fmt(e.ts)} ${e.model?`· ${esc(shortModel(e.model))}`:""}</div>${rule}
+      </div>`;
     box.appendChild(d);
   }
 }
-function fmt(ts){
-  const d=new Date(ts);
-  return d.toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
-}
+const shortModel=(m)=>m.split("/").pop();
+const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=(ts)=>new Date(ts).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});
 
 async function notify(e){
+  const important = rules.some(r=>r.enabled) ? e.alert : true;
+  if(!important) return;
   try{ navigator.vibrate?.([90,50,90]); }catch{}
   if(!notiOn||Notification.permission!=="granted") return;
-  try{
-    new Notification("다시봄 — 활동 감지", { body:`${e.text}\n${fmt(e.ts)}`, icon:"/icon.svg", tag:"dasibom" });
-  }catch{}
+  try{ new Notification("다시봄 — "+(e.alert?"알림 조건 충족":"활동 감지"),{body:`${e.text}\n${fmt(e.ts)}`,icon:"/icon.svg",tag:"dasibom"}); }catch{}
 }
 
+/* ── 버튼 ─────────────────────────────── */
 $("#btnNoti").onclick=async()=>{
-  try{
-    const p=await Notification.requestPermission();
-    notiOn = p==="granted";
-    $("#btnNoti").textContent = notiOn ? "🔔 알림 켜짐" : "🔕 알림 거부됨";
+  try{ notiOn=(await Notification.requestPermission())==="granted";
+    $("#btnNoti").textContent=notiOn?"🔔 알림 켜짐":"🔕 알림 거부됨";
   }catch{ $("#btnNoti").textContent="🔕 지원 안 함"; }
 };
 $("#btnFlip").onclick=()=>send({t:"cmd",cmd:"flip"});
 $("#btnTorch").onclick=()=>send({t:"cmd",cmd:"torch"});
 $("#btnShot").onclick=()=>send({t:"cmd",cmd:"snapshot"});
-$("#btnClear").onclick=async()=>{
-  if(!confirm("활동 기록을 모두 지울까요?")) return;
-  await fetch(`/api/room/${code}/clear`);
-};
+$("#btnClear").onclick=async()=>{ if(confirm("활동 기록을 모두 지울까요?")) await fetch(`/api/room/${code}/clear`); };
 $("#btnSum").onclick=async()=>{
-  const box=$("#summary");
-  box.style.display="block"; box.textContent="AI가 기록을 읽는 중…";
+  const box=$("#summary"); box.style.display="block"; box.textContent="AI가 기록을 읽는 중…";
   try{
-    const r=await fetch(`/api/room/${code}/summary`);
-    const j=await r.json();
-    box.innerHTML=`<b>🤖 AI 요약</b><br>${(j.text||"").replace(/\n/g,"<br>")}`;
-  }catch(e){ box.textContent="요약에 실패했습니다."; }
+    const j=await (await fetch(`/api/room/${code}/summary`)).json();
+    box.innerHTML=`<b>🤖 AI 요약</b><br>${esc(j.text||"").replace(/\n/g,"<br>")}`;
+  }catch{ box.textContent="요약에 실패했습니다."; }
 };
 $("#btnJoin").onclick=()=>{
   code=$("#codeIn").value.toUpperCase().replace(/[^A-Z0-9]/g,"");
-  $("#bCode").textContent=code; localStorage.setItem("dasibom:code",code);
-  connect();
+  $("#bCode").textContent=code; localStorage.setItem("dasibom:code",code); connect();
 };
 
-renderAll();
-connect();
+renderEvents(); renderRules(); connect();
 if("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(()=>{});
 </script>
 </body>

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>다시봄 — 서랍 속 헌 폰을 AI 홈캠으로</title>
-<meta name="description" content="앱 설치 없이 링크 하나로. 안 쓰는 스마트폰이 AI 홈캠이 됩니다.">
+<title>다시봄 — 말로 설정하는 AI 홈캠</title>
+<meta name="description" content="\"고양이가 식탁에 올라가면 알려줘\" — 한국어로 쓰면 비전 AI가 화면을 보고 그때만 알립니다. 헌 폰과 브라우저만 있으면 됩니다.">
 <meta name="theme-color" content="#0b0f14">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icon.svg">
@@ -13,7 +13,20 @@
 <body>
 <div class="wrap center">
   <h1>다시봄</h1>
-  <p class="sub">서랍 속 헌 폰을 <b>앱 설치 없이</b> AI 홈캠으로.<br>링크만 열면 끝납니다.</p>
+  <p class="sub"><b>말로 설정하는</b> AI 홈캠.<br>서랍 속 헌 폰과 브라우저만 있으면 됩니다.</p>
+
+  <div class="card" style="border-color:#2f5e42">
+    <div class="small dim" style="margin-bottom:8px">이렇게 쓰면</div>
+    <div class="mono" style="font-size:15px;line-height:2.1;color:var(--accent)">
+      "고양이가 식탁에 올라가면 알려줘"<br>
+      "택배 상자가 놓이면 알려줘"<br>
+      "아기가 침대에서 내려오면 알려줘"
+    </div>
+    <div class="hint" style="margin-top:10px">
+      움직임이 감지되면 <b>비전 AI(Qwen 3.8 27B)</b>가 그 순간의 화면을 보고
+      <b>조건이 맞을 때만</b> 알립니다. 기존 홈캠처럼 아무 때나 울리지 않습니다.
+    </div>
+  </div>
 
   <div class="card">
     <div class="row" style="justify-content:space-between">
@@ -52,7 +65,7 @@
     <div>📷 카메라 (전·후면 전환)</div>
     <div>🎙 마이크 소리 감지</div>
     <div>🧠 온디바이스 움직임 감지</div>
-    <div>🤖 Workers AI 객체 인식</div>
+    <div>🤖 Qwen 비전 AI 판정</div>
     <div>💡 화면 꺼짐 방지</div>
     <div>🔋 배터리 상태</div>
     <div>🔦 플래시 원격 제어</div>
@@ -64,10 +77,13 @@
   <div class="card" style="margin-top:18px">
     <h2 style="margin-top:0">왜 만들었나</h2>
     <p class="small dim" style="margin:0">
-      안 쓰는 스마트폰은 카메라·마이크·연산장치·화면·통신이 전부 달린 멀쩡한 컴퓨터입니다.
-      그런데 대부분 서랍에서 방전된 채 잠들어 있습니다. 홈캠은 따로 사면 5~10만원이고요.<br><br>
-      다시봄은 <b>새 기기를 사지 않고</b>, <b>앱도 깔지 않고</b>, 브라우저 하나로 그 폰을 되살립니다.
-      영상은 기기 안에서 먼저 분석해 <b>움직임이 있을 때만</b> 서버로 보냅니다.
+      시중 홈캠은 <b>움직임 하나만</b> 감지합니다. 그래서 커튼이 흔들려도, 내가 지나가도 울립니다.
+      정작 알고 싶은 건 "택배가 왔는지", "고양이가 또 식탁에 올라갔는지"인데 그건 못 정합니다.<br><br>
+      다시봄은 알림 조건을 <b>한국어 문장으로</b> 정합니다. 움직임은 1차 필터일 뿐이고,
+      그 순간의 화면을 비전 AI가 읽어 <b>당신이 말한 조건인지</b> 판단합니다.<br><br>
+      그리고 이걸 <b>새 기기 없이</b> 합니다. 서랍 속 헌 폰은 카메라·마이크·연산장치·통신이
+      전부 달린 멀쩡한 컴퓨터입니다. 앱도 깔지 않고 브라우저 링크 하나로 되살립니다.
+      영상은 보는 사람이 있을 때와 감지된 순간에만 전송됩니다.
     </p>
   </div>
 
